@@ -45,11 +45,11 @@ bpy.ops.mesh.primitive_cylinder_add(radius=0.03, depth=0.8, location=(3.4, 0, 4.
 arm = bpy.context.object
 arm.name = "Lamp_Arm"
 arm.rotation_euler = (0, math.radians(90), 0)
-# lamp head (cone shade pointing down)
+# lamp head — wide base faces DOWN (default cone orientation, no rotation needed)
 bpy.ops.mesh.primitive_cone_add(radius1=0.18, radius2=0.05, depth=0.22, location=(3.8, 0, 3.98))
 shade = bpy.context.object
 shade.name = "Lamp_Shade"
-shade.rotation_euler = (math.pi, 0, 0)
+# rotation_euler stays (0,0,0): radius1 (wide) naturally faces -Z = downward
 # bulb
 bpy.ops.mesh.primitive_uv_sphere_add(radius=0.07, location=(3.8, 0, 3.85))
 bulb = bpy.context.object

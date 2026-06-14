@@ -106,26 +106,41 @@ def run(
     scene_snapshot: str,
     client: anthropic.Anthropic,
     iteration: int = 1,
+    screenshot_b64: str | None = None,
 ) -> dict:
     """
     Score the current scene. Returns dict: score, verdict, strengths, issues,
     feedback_for_orchestrator, immediate_fixes.
+    If screenshot_b64 is provided (base64 PNG from get_viewport_screenshot),
+    it is included in the message so Claude can visually review the scene.
     """
+    text_content = (
+        f"Original prompt: {original_prompt}\n\n"
+        f"Scene spec used:\n{json.dumps(scene_spec, indent=2)}\n\n"
+        f"Current Blender scene objects:\n{scene_snapshot}\n\n"
+        f"QA iteration: {iteration}. Score and review this scene."
+    )
+
+    if screenshot_b64:
+        user_content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": screenshot_b64,
+                },
+            },
+            {"type": "text", "text": text_content},
+        ]
+    else:
+        user_content = text_content
+
     message = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=2048,
         system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Original prompt: {original_prompt}\n\n"
-                    f"Scene spec used:\n{json.dumps(scene_spec, indent=2)}\n\n"
-                    f"Current Blender scene objects:\n{scene_snapshot}\n\n"
-                    f"QA iteration: {iteration}. Score and review this scene."
-                ),
-            }
-        ],
+        messages=[{"role": "user", "content": user_content}],
     )
 
     raw = message.content[0].text.strip()
