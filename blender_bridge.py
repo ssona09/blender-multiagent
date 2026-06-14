@@ -1,16 +1,17 @@
 """
-Thin TCP client that sends bpy commands to the Blender socket addon.
-All agents import and call BlenderBridge — they never talk to Blender directly.
+Async MCP bridge to Blender via BlenderMCP.
+
+Flow: our code → stdio → `uvx blender-mcp` → TCP 9876 → BlenderMCP Blender addon
+
+Prerequisites:
+  brew install uv                   # for `uvx blender-mcp`
+  pip install "anthropic[mcp]"      # already in requirements
+  BlenderMCP addon installed + running in Blender (N-panel → BlenderMCP → Connect)
 """
 
-import socket
-import json
-import time
-
-
-HOST = "127.0.0.1"
-PORT = 9876
-TIMEOUT = 30
+from contextlib import AsyncExitStack
+from mcp import ClientSession
+from mcp.client.stdio import stdio_client, StdioServerParameters
 
 
 class BlenderBridgeError(Exception):
@@ -18,92 +19,73 @@ class BlenderBridgeError(Exception):
 
 
 class BlenderBridge:
-    def __init__(self, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT):
-        self.host = host
-        self.port = port
-        self.timeout = timeout
-        self._sock: socket.socket | None = None
+    """Async context manager that talks to Blender via BlenderMCP MCP tools."""
 
-    def connect(self):
-        if self._sock:
-            return
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.settimeout(self.timeout)
-        self._sock.connect((self.host, self.port))
+    def __init__(self):
+        self._session: ClientSession | None = None
+        self._stack: AsyncExitStack | None = None
 
-    def reconnect(self, retries: int = 5, delay: float = 2.0):
-        """Close current socket and attempt to reconnect (used after Blender restarts socket server)."""
-        self.disconnect()
-        last_err = None
-        for attempt in range(1, retries + 1):
-            try:
-                print(f"  [Bridge] Reconnecting... attempt {attempt}/{retries}")
-                self.connect()
-                print("  [Bridge] Reconnected.")
-                return
-            except OSError as e:
-                last_err = e
-                time.sleep(delay)
-        raise BlenderBridgeError(f"Could not reconnect to Blender after {retries} attempts: {last_err}")
-
-    def disconnect(self):
-        if self._sock:
-            try:
-                self._sock.close()
-            except Exception:
-                pass
-            self._sock = None
-
-    def run(self, code: str) -> str:
-        """
-        Send a bpy code block to Blender and return the result string.
-        Auto-reconnects once on broken pipe.
-        Raises BlenderBridgeError on execution failure.
-        """
-        for attempt in range(2):
-            try:
-                self.connect()
-                msg = json.dumps({"code": code}) + "\n"
-                self._sock.sendall(msg.encode("utf-8"))
-
-                raw = b""
-                while b"\n" not in raw:
-                    chunk = self._sock.recv(65536)
-                    if not chunk:
-                        raise BlenderBridgeError("Connection closed before response received")
-                    raw += chunk
-
-                line = raw.split(b"\n")[0]
-                response = json.loads(line.decode("utf-8"))
-
-                if response["status"] != "ok":
-                    raise BlenderBridgeError(response.get("error", "Unknown error from Blender"))
-
-                return response.get("result", "")
-
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                if attempt == 0:
-                    print("  [Bridge] Connection lost — reconnecting...")
-                    self.reconnect()
-                else:
-                    raise BlenderBridgeError("Blender socket server is not available. Restart the addon in Blender.")
-
-    def run_many(self, commands: list[str]) -> list[str]:
-        results = []
-        for cmd in commands:
-            results.append(self.run(cmd))
-        return results
-
-    def clear_scene(self):
-        self.run(
-            "bpy.ops.object.select_all(action='SELECT')\n"
-            "bpy.ops.object.delete(use_global=False)\n"
-            "result = 'done'"
-        )
-
-    def __enter__(self):
-        self.connect()
+    async def __aenter__(self):
+        self._stack = AsyncExitStack()
+        params = StdioServerParameters(command="uvx", args=["blender-mcp"])
+        read, write = await self._stack.enter_async_context(stdio_client(params))
+        self._session = await self._stack.enter_async_context(ClientSession(read, write))
+        await self._session.initialize()
+        tools = await self._session.list_tools()
+        print(f"  [Bridge] Connected via BlenderMCP — tools: {[t.name for t in tools.tools]}")
         return self
 
-    def __exit__(self, *_):
-        self.disconnect()
+    async def __aexit__(self, *args):
+        if self._stack:
+            await self._stack.aclose()
+
+    async def run(self, code: str) -> str:
+        """Execute bpy Python code in Blender and return the result string.
+
+        BlenderMCP captures print() output (not the `result` variable), so we
+        append a print() call automatically — agents can keep writing `result = ...`.
+        """
+        wrapped = (
+            code.rstrip()
+            + "\n\ntry:\n    print(str(result))\nexcept NameError:\n    print('done')"
+        )
+        try:
+            resp = await self._session.call_tool("execute_blender_code", {"code": wrapped})
+            for item in resp.content:
+                if hasattr(item, "text"):
+                    text: str = item.text
+                    prefix = "Code executed successfully: "
+                    if text.startswith(prefix):
+                        return text[len(prefix):].rstrip("\n")
+                    return text.rstrip("\n")
+            return "done"
+        except Exception as e:
+            raise BlenderBridgeError(str(e)) from e
+
+    async def render_preview(self) -> str | None:
+        """Render the scene; return base64-encoded PNG or None on failure."""
+        try:
+            resp = await self._session.call_tool("render_preview", {})
+            for item in resp.content:
+                if hasattr(item, "data"):
+                    return item.data
+                if hasattr(item, "text") and item.text:
+                    return item.text
+            return None
+        except Exception as e:
+            print(f"  [Bridge] render_preview failed: {e}")
+            return None
+
+    async def get_viewport_screenshot(self) -> str | None:
+        """Take a viewport screenshot; return base64-encoded PNG or None on failure."""
+        try:
+            resp = await self._session.call_tool("get_viewport_screenshot", {})
+            for item in resp.content:
+                if hasattr(item, "data"):
+                    return item.data
+                if hasattr(item, "text") and item.text:
+                    return item.text
+            return None
+        except Exception as e:
+            print(f"  [Bridge] get_viewport_screenshot failed: {e}")
+            return None

@@ -1,3 +1,4 @@
+import asyncio
 from blender_bridge import BlenderBridge
 
 code = """
@@ -25,5 +26,9 @@ key.data.size = 1.5                    # large area = soft shadows
 result = 'character lighting boosted'
 """
 
-with BlenderBridge() as b:
-    print(b.run(code))
+
+async def main():
+    async with BlenderBridge() as b:
+        print(await b.run(code))
+
+asyncio.run(main())
