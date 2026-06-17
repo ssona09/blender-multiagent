@@ -57,7 +57,7 @@ async def _send_commands(bridge: BlenderBridge, commands: list[str], label: str)
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
-async def run(prompt: str):
+async def run(prompt: str, include_character: bool = True):
     load_dotenv()
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -85,7 +85,7 @@ async def run(prompt: str):
 
             # ── 2. Composition Agent ──────────────────────────────────
             _log("Composition Agent", "Building geometry + camera...")
-            comp_result = composition_agent.run(scene_spec, client)
+            comp_result = composition_agent.run(scene_spec, client, include_character=include_character)
             await _send_commands(bridge, comp_result.get("bpy_commands", []), "Composition")
 
             comp_summary = comp_result.get("summary", {})
@@ -170,5 +170,8 @@ async def run(prompt: str):
 
 
 if __name__ == "__main__":
-    user_prompt = " ".join(sys.argv[1:]).strip() or DEMO_PROMPT
-    asyncio.run(run(user_prompt))
+    args = sys.argv[1:]
+    no_char = "--no-character" in args
+    args = [a for a in args if a != "--no-character"]
+    user_prompt = " ".join(args).strip() or DEMO_PROMPT
+    asyncio.run(run(user_prompt, include_character=not no_char))

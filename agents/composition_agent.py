@@ -193,12 +193,17 @@ CHARACTER_FBX = "/Users/sonali/Downloads/character.fbx"
 CHARACTER_DAE = "/Users/sonali/Downloads/Talking on Phone/Talking On Phone.dae"
 
 
-def run(scene_spec: dict, client: anthropic.Anthropic) -> dict:
+def run(scene_spec: dict, client: anthropic.Anthropic, include_character: bool = True) -> dict:
     """
     Generate bpy commands to build scene geometry + camera.
-    Injects an FBX import command for the hero character.
-    Returns dict with bpy_commands (list[str]) and summary (dict).
+    Pass include_character=False to skip the FBX import (e.g. for demos or non-street scenes).
     """
+    char_note = (
+        "A real Mixamo character will be imported at (0,0,0) — leave that spot clear, do NOT build a humanoid."
+        if include_character
+        else "No character will be imported — feel free to use the center of the scene for props."
+    )
+
     message = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=8192,
@@ -215,7 +220,7 @@ def run(scene_spec: dict, client: anthropic.Anthropic) -> dict:
                     "Use for-loops only for structural repeats like lamp posts or fence rails, NOT windows. "
                     "Limit to 8 distinct objects max — quality over quantity. "
                     "Keep the <summary> objects_placed list SHORT (group related items, e.g. 'street_lamps x2'). "
-                    "A real Mixamo character will be imported at (0,0,0) — leave that spot clear, do NOT build a humanoid. "
+                    f"{char_note} "
                     "Generate the <summary> then ALL <commands> before stopping."
                 ),
             }
@@ -225,15 +230,14 @@ def run(scene_spec: dict, client: anthropic.Anthropic) -> dict:
     raw = message.content[0].text.strip()
     result = _parse(raw)
 
-    # Inject the FBX import as the second-to-last command (before camera)
-    import_cmd = CHARACTER_IMPORT_CODE.format(
-        fbx_path=CHARACTER_FBX,
-        x=0, y=0, z=0,
-        rz=0,
-    ).strip()
-    # Insert before the last command (which should be the camera)
-    cmds = result["bpy_commands"]
-    result["bpy_commands"] = cmds[:-1] + [import_cmd] + [cmds[-1]]
-    result["summary"]["objects_placed"].append("HeroCharacter (FBX)")
+    if include_character:
+        import_cmd = CHARACTER_IMPORT_CODE.format(
+            fbx_path=CHARACTER_FBX,
+            x=0, y=0, z=0,
+            rz=0,
+        ).strip()
+        cmds = result["bpy_commands"]
+        result["bpy_commands"] = cmds[:-1] + [import_cmd] + [cmds[-1]]
+        result["summary"]["objects_placed"].append("HeroCharacter (FBX)")
 
     return result
