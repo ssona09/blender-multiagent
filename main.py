@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 import anthropic
 
 from blender_bridge import BlenderBridge, BlenderBridgeError
-from agents import orchestrator, composition_agent, lighting_agent, qa_agent
+from agents import orchestrator, composition_agent, spatial_agent, lighting_agent, qa_agent
 
 MAX_RETRIES = 2   # QA retries if score < 7
 PASS_SCORE = 7
@@ -91,7 +91,20 @@ async def run(prompt: str):
             comp_summary = comp_result.get("summary", {})
             print(f"\n  Objects placed: {comp_summary.get('objects_placed', [])}")
 
-            # ── 3. Lighting Agent ─────────────────────────────────────
+            # ── 3. Spatial Agent ──────────────────────────────────────
+            _log("Spatial Agent", "Checking for floating objects, scale issues, clipping...")
+            spatial_snapshot = await bridge.run(qa_agent.get_snapshot_code())
+            spatial_shot = await bridge.get_viewport_screenshot()
+            spatial_result = spatial_agent.run(scene_spec, spatial_snapshot, client, spatial_shot)
+
+            print(f"\n  Spatial issues: {spatial_result.get('issues', [])}")
+            spatial_fixes = spatial_result.get("fixes", [])
+            if spatial_fixes:
+                await _send_commands(bridge, spatial_fixes, "Spatial Fixes")
+            else:
+                print("  No spatial issues found.")
+
+            # ── 4. Lighting Agent ─────────────────────────────────────
             _log("Lighting Agent", "Setting up lights + world...")
             light_result = lighting_agent.run(scene_spec, comp_summary, client)
             await _send_commands(bridge, light_result.get("bpy_commands", []), "Lighting")
@@ -99,7 +112,7 @@ async def run(prompt: str):
             light_summary = light_result.get("summary", {})
             print(f"\n  Mood: {light_summary.get('mood_achieved', '')}")
 
-            # ── 4. QA Agent ───────────────────────────────────────────
+            # ── 5. QA Agent ───────────────────────────────────────────
             _log("QA Agent", "Inspecting scene...")
             snapshot_json = await bridge.run(qa_agent.get_snapshot_code())
 

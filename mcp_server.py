@@ -26,7 +26,7 @@ from mcp.server.fastmcp import FastMCP, Context, Image
 load_dotenv()
 
 from blender_bridge import BlenderBridge, BlenderBridgeError
-from agents import orchestrator, composition_agent, lighting_agent, qa_agent
+from agents import orchestrator, composition_agent, spatial_agent, lighting_agent, qa_agent
 
 MAX_RETRIES = 2
 PASS_SCORE = 7
@@ -81,7 +81,7 @@ async def build_scene(prompt: str, ctx: Context) -> str:
     log = []
     qa_feedback = ""
     score = 0
-    total_steps = (MAX_RETRIES + 1) * 4  # 4 stages per attempt
+    total_steps = (MAX_RETRIES + 1) * 5  # 5 stages per attempt
 
     await ctx.info(f"Starting pipeline for: {prompt}")
 
@@ -108,6 +108,20 @@ async def build_scene(prompt: str, ctx: Context) -> str:
         objects = comp_result.get("summary", {}).get("objects_placed", [])
         log.append(f"Composition: placed {objects} ({errors} errors)")
         await ctx.info(f"Placed: {objects}")
+
+        # Spatial review
+        await ctx.report_progress(step_base + 1, total_steps, "Spatial agent: checking positions...")
+        spatial_snapshot = await bridge.run(qa_agent.get_snapshot_code())
+        spatial_shot = await bridge.get_viewport_screenshot()
+        spatial_result = spatial_agent.run(scene_spec, spatial_snapshot, client, spatial_shot)
+        spatial_issues = spatial_result.get("issues", [])
+        log.append(f"Spatial: {spatial_issues if spatial_issues else 'no issues'}")
+        await ctx.info(f"Spatial issues: {spatial_issues}")
+        for fix in spatial_result.get("fixes", []):
+            try:
+                await bridge.run(fix)
+            except BlenderBridgeError as e:
+                log.append(f"  Spatial fix error: {str(e)[:80]}")
 
         # Lighting
         await ctx.report_progress(step_base + 2, total_steps, "Lighting: setting up lights...")

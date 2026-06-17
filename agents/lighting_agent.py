@@ -26,7 +26,7 @@ Respond in this exact format — two tagged sections, nothing outside them:
 </summary>
 <commands>
 # --- COMMAND 1: render engine ---
-bpy.context.scene.render.engine = 'BLENDER_EEVEE_NEXT'
+bpy.context.scene.render.engine = 'BLENDER_EEVEE'
 bpy.context.scene.eevee.taa_render_samples = 64
 result = "done"
 ===
@@ -49,7 +49,7 @@ result = "done"
 </commands>
 
 Rules:
-- Set render engine to 'BLENDER_EEVEE_NEXT' (Blender 5) in the first command.
+- Set render engine to 'BLENDER_EEVEE' (Blender 5) in the first command.
 - Convert hex colors to linear RGB floats manually (e.g. #ff8800 → (1.0, 0.53, 0.0)).
 - Use bpy.ops.object.light_add(type=..., location=(...)) for each light.
 - Configure world background via bpy.context.scene.world.node_tree nodes.
